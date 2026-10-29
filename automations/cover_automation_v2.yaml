@@ -1,5 +1,5 @@
 blueprint:
-  name: s42 - Intelligente Rollladensteuerung V2 (ein Rollladen pro Automation)
+  name: s42 - Intelligente Rollladensteuerung V2 + Raffstore (ein Rollladen pro Automation)
   description: >
     Steuert einen einzelnen Rollladen anhand "seines" Fensters: morgendliches Öffnen,
     Reaktion auf gekippte/geöffnete Fenster inkl. Rückfahr-Logik, Nachtmodus, Sturmschutz,
@@ -14,12 +14,15 @@ blueprint:
     werden einfach in allen Instanzen identisch ausgewählt.
 
 
+    Raffstore-Erweiterung: optionale Lamellensteuerung für KNX-Jalousieaktoren
+    (Referenz: MDT JAL-0810M.02), siehe Abschnitt "Raffstore / Lamellen".
+
+
     📖 [Ausführliche Dokumentation & FAQ](https://github.com/TheRealSimon42/ha-blueprints/blob/main/docs/cover_automation_v2.md)
   domain: automation
   author: TheRealSimon42
   homeassistant:
     min_version: "2024.10.0"
-  source_url: https://raw.githubusercontent.com/TheRealSimon42/ha-blueprints/main/automations/cover_automation_v2.yaml
   input:
     assignment_section:
       name: Zuordnung
@@ -59,6 +62,220 @@ blueprint:
                     - opening
                     - garage_door
                 - domain: sensor
+    slat_section:
+      name: Raffstore / Lamellen
+      description: >
+        Optionale Lamellensteuerung für Raffstores an KNX-Jalousieaktoren wie dem
+        MDT JAL-0810M.02. Greift nur, wenn das Cover Lamellenpositionen
+        unterstützt (KNX: angle_address und angle_state_address konfiguriert) —
+        Rollläden verhalten sich unverändert.
+
+
+        Mit aktivierter Lamellensteuerung gilt: Die Beschattung fährt den Behang
+        auf die "Minimale Beschattungsposition" (Standard 0 % = ganz unten) und
+        regelt danach nur noch die Lamellen. Ein gekipptes oder geöffnetes
+        Fenster lässt die Höhe unverändert und öffnet nur die Lamellen. Der
+        Sturmschutz fährt den Raffstore immer hoch (der Panzer-Modus wird
+        ignoriert, auch bei offenem Fenster). Nach jeder automatischen Höhenfahrt
+        folgt ein eigener Lamellenbefehl, sobald die Fahrt beendet ist — MDT-Aktoren
+        verwerfen Lamellenbefehle, die während der Fahrt eintreffen.
+        Lamellen-Konvention in Home Assistant: 100 % = Lamellen offen (waagrecht),
+        0 % = Lamellen geschlossen.
+      icon: mdi:blinds
+      collapsed: true
+      input:
+        slat_enabled:
+          name: Lamellensteuerung aktivieren
+          description: >
+            Für Raffstores aktivieren. Wird ignoriert, wenn das Cover keine
+            Lamellenpositionen unterstützt.
+          default: false
+          selector:
+            boolean: {}
+        slat_travel_timeout:
+          name: Maximale Fahrzeit
+          description: >
+            So lange wird höchstens auf das Ende einer Höhenfahrt gewartet, bevor
+            die Lamellen gestellt werden. Etwas länger wählen als die komplette
+            Fahrzeit des Behangs.
+          default: 120
+          selector:
+            number:
+              min: 10
+              max: 300
+              step: 5
+              mode: slider
+              unit_of_measurement: s
+        slat_settle_delay:
+          name: Wartezeit vor dem Lamellenbefehl
+          description: >
+            Pause zwischen dem Fahrtende (laut Home Assistant) und dem
+            Lamellenbefehl. Gibt dem Aktor Zeit, seine eigene Lamellenbewegung am
+            Fahrtende abzuschließen. Erhöhen, falls Lamellenbefehle gelegentlich
+            ignoriert werden.
+          default: 3
+          selector:
+            number:
+              min: 0
+              max: 10
+              step: 1
+              mode: slider
+              unit_of_measurement: s
+        slat_morning_tilt:
+          name: Lamellenposition morgens
+          description: >
+            Lamellenposition nach der morgendlichen Fahrt (nur relevant, wenn die
+            Zielposition für morgens unter 100 % liegt).
+          default: 100
+          selector:
+            number:
+              min: 0
+              max: 100
+              step: 1
+              mode: slider
+              unit_of_measurement: "%"
+        slat_night_tilt:
+          name: Lamellenposition nachts
+          description: Lamellenposition im Nachtmodus bei geschlossenem Fenster (0 = komplett zu).
+          default: 0
+          selector:
+            number:
+              min: 0
+              max: 100
+              step: 1
+              mode: slider
+              unit_of_measurement: "%"
+        slat_ventilation_tilt:
+          name: Lamellenposition beim Lüften
+          description: >
+            Lamellenposition bei gekipptem oder geöffnetem Fenster (auch nachts).
+            Die Höhe des Behangs bleibt dabei unverändert. Die Lamellen werden nur
+            geöffnet, nie weiter geschlossen.
+          default: 100
+          selector:
+            number:
+              min: 0
+              max: 100
+              step: 1
+              mode: slider
+              unit_of_measurement: "%"
+        slat_open_raises_cover:
+          name: Bei geöffnetem Fenster hochfahren
+          description: >
+            Standardmäßig öffnet ein geöffnetes Fenster nur die Lamellen. Für
+            Balkon- und Terrassentüren aktivieren: Ein komplett geöffnetes
+            Fenster bzw. eine geöffnete Tür fährt den Raffstore dann wie einen
+            Rollladen hoch (Aussperrschutz). Gekippte Fenster öffnen weiterhin
+            nur die Lamellen.
+          default: false
+          selector:
+            boolean: {}
+        slat_shading_mode:
+          name: Lamellenmodus bei Beschattung
+          description: >
+            "Sonnenstandsnachführung" berechnet den flachsten Lamellenwinkel, der
+            direktes Sonnenlicht gerade noch abhält (Cut-off), anhand der
+            Lamellengeometrie unten. "Fester Winkel" verwendet immer die feste
+            Lamellenposition.
+          default: tracking
+          selector:
+            select:
+              mode: list
+              options:
+                - value: tracking
+                  label: Sonnenstandsnachführung (Cut-off)
+                - value: fixed
+                  label: Fester Winkel
+        slat_shading_fixed_tilt:
+          name: Feste Lamellenposition bei Beschattung
+          description: Wird im Lamellenmodus "Fester Winkel" verwendet.
+          default: 30
+          selector:
+            number:
+              min: 0
+              max: 100
+              step: 1
+              mode: slider
+              unit_of_measurement: "%"
+        slat_width:
+          name: Lamellenbreite
+          description: Tiefe einer einzelnen Lamelle (nur Nachführung). Üblich sind 60–100 mm.
+          default: 80
+          selector:
+            number:
+              min: 20
+              max: 150
+              step: 1
+              mode: box
+              unit_of_measurement: mm
+        slat_spacing:
+          name: Lamellenabstand
+          description: >
+            Senkrechter Abstand zwischen zwei Lamellen (Drehpunkt zu Drehpunkt)
+            im heruntergefahrenen Zustand (nur Nachführung). Meist etwas kleiner
+            als die Lamellenbreite.
+          default: 72
+          selector:
+            number:
+              min: 20
+              max: 150
+              step: 1
+              mode: box
+              unit_of_measurement: mm
+        slat_closed_angle:
+          name: Lamellenwinkel bei 0 % (geschlossen)
+          description: >
+            Tatsächlicher Lamellenwinkel in Grad unter der Waagrechten
+            (Außenkante nach unten) bei 0 % (nur Nachführung). Zum Kalibrieren
+            die Lamellen auf 0 % fahren und den Winkel messen bzw. schätzen.
+          default: 80
+          selector:
+            number:
+              min: 30
+              max: 90
+              step: 1
+              mode: slider
+              unit_of_measurement: °
+        slat_open_angle:
+          name: Lamellenwinkel bei 100 % (offen)
+          description: >
+            Tatsächlicher Lamellenwinkel bei 100 % (nur Nachführung). 0° =
+            waagrecht; negative Werte = Außenkante zeigt nach oben.
+          default: 0
+          selector:
+            number:
+              min: -45
+              max: 20
+              step: 1
+              mode: slider
+              unit_of_measurement: °
+        slat_tracking_margin:
+          name: Sicherheitszuschlag Nachführung
+          description: >
+            Schließt die Lamellen um so viele Grad weiter als rechnerisch nötig,
+            um Lamellenwölbung und Kalibrier-Toleranzen auszugleichen (nur
+            Nachführung).
+          default: 5
+          selector:
+            number:
+              min: 0
+              max: 20
+              step: 1
+              mode: slider
+              unit_of_measurement: °
+        slat_shading_end_tilt:
+          name: Lamellenposition nach der Beschattung
+          description: >
+            Lamellenposition nach Ende der Beschattung (nur relevant, wenn die
+            "Position nach der Beschattung" unter 100 % liegt).
+          default: 100
+          selector:
+            number:
+              min: 0
+              max: 100
+              step: 1
+              mode: slider
+              unit_of_measurement: "%"
     morning_section:
       name: Morgens öffnen
       description: Einstellungen für das automatische Öffnen am Morgen.
@@ -944,6 +1161,26 @@ variables:
   reclose_timeout: !input reclose_timeout
   force_close: !input force_close
   treat_open_as_tilted: !input treat_open_as_tilted
+  slat_enabled: !input slat_enabled
+  # Slat control only if enabled AND the cover can set a tilt position
+  # (CoverEntityFeature.SET_TILT_POSITION = 128) — otherwise roller shutter behaviour
+  slat_active: >-
+    {{ slat_enabled
+       and ((state_attr(cover_entity, 'supported_features') | int(0)) | bitwise_and(128)) > 0 }}
+  slat_travel_timeout: !input slat_travel_timeout
+  slat_settle_delay: !input slat_settle_delay
+  slat_morning_tilt: !input slat_morning_tilt
+  slat_night_tilt: !input slat_night_tilt
+  slat_ventilation_tilt: !input slat_ventilation_tilt
+  slat_open_raises_cover: !input slat_open_raises_cover
+  slat_shading_mode: !input slat_shading_mode
+  slat_shading_fixed_tilt: !input slat_shading_fixed_tilt
+  slat_width: !input slat_width
+  slat_spacing: !input slat_spacing
+  slat_closed_angle: !input slat_closed_angle
+  slat_open_angle: !input slat_open_angle
+  slat_tracking_margin: !input slat_tracking_margin
+  slat_shading_end_tilt: !input slat_shading_end_tilt
   morning_enabled: !input morning_enabled
   morning_time_entity: !input morning_time
   morning_use_sun: !input morning_use_sun
@@ -1265,6 +1502,28 @@ actions:
                       entity_id: !input cover
                     data:
                       position: "{{ morning_target }}"
+                  # Slats only after the height travel has finished: the MDT actuator
+                  # drops slat telegrams received while the blind is still moving
+                  - if:
+                      - "{{ slat_active }}"
+                    then:
+                      - wait_template: "{{ states(cover_entity) in ['opening', 'closing'] }}"
+                        timeout: 5
+                        continue_on_timeout: true
+                      - wait_template: "{{ states(cover_entity) not in ['opening', 'closing'] }}"
+                        timeout: "{{ slat_travel_timeout | int(120) }}"
+                        continue_on_timeout: true
+                      - delay:
+                          seconds: "{{ slat_settle_delay | int(3) }}"
+                      # Slat commands in the upper end position are ignored by the actuator
+                      - if:
+                          - "{{ state_attr(cover_entity, 'current_position') | int(100) < 100 }}"
+                        then:
+                          - action: cover.set_cover_tilt_position
+                            target:
+                              entity_id: "{{ cover_entity }}"
+                            data:
+                              tilt_position: "{{ slat_morning_tilt }}"
               # Fallback für Cover ohne Positions-Attribut
               - conditions:
                   - "{{ state_attr(cover_entity, 'current_position') is none }}"
@@ -1311,48 +1570,106 @@ actions:
               - action: input_boolean.turn_off
                 target:
                   entity_id: "{{ solar_heating_status_helper }}"
-          - choose:
-              - conditions:
-                  - >-
-                    {{ window_sensor is string
-                       and ((states(window_sensor) | lower) == 'tilted'
-                            or (treat_open_as_tilted and (states(window_sensor) | lower) in ['on', 'open'])) }}
-                sequence:
-                  - action: cover.set_cover_position
-                    target:
-                      entity_id: !input cover
-                    data:
-                      position: !input tilted_position
-              - conditions:
-                  - "{{ window_sensor is string and (states(window_sensor) | lower) in ['on', 'open'] }}"
-                sequence:
-                  - action: cover.set_cover_position
-                    target:
-                      entity_id: !input cover
-                    data:
-                      position: !input night_ventilation_position
-            default:
-              # Nacht-Zielposition über 0 braucht Positionsangaben —
-              # sonst (und beim Standard 0) wird komplett geschlossen
+          - if:
+              - "{{ slat_active }}"
+            then:
+              # Venetian blind: height as configured for the night; ventilation happens
+              # through the slats instead of a raised blind (unless explicitly enabled)
+              - variables:
+                  slat_win_state: "{{ (states(window_sensor) | lower) if window_sensor is string else 'off' }}"
+                  slat_win_tilted: >-
+                    {{ slat_win_state == 'tilted'
+                       or (treat_open_as_tilted and slat_win_state in ['on', 'open']) }}
+                  slat_win_open: "{{ not slat_win_tilted and slat_win_state in ['on', 'open'] }}"
               - if:
-                  - "{{ night_position | int(0) > 0 and state_attr(cover_entity, 'current_position') is not none }}"
+                  - "{{ slat_win_open and slat_open_raises_cover }}"
                 then:
                   - action: cover.set_cover_position
                     target:
                       entity_id: !input cover
                     data:
-                      position: !input night_position
+                      position: !input night_ventilation_position
                 else:
-                  - action: cover.close_cover
-                    target:
-                      entity_id: !input cover
+                  - if:
+                      - "{{ night_position | int(0) > 0 }}"
+                    then:
+                      - action: cover.set_cover_position
+                        target:
+                          entity_id: !input cover
+                        data:
+                          position: !input night_position
+                    else:
+                      - action: cover.close_cover
+                        target:
+                          entity_id: !input cover
+              # Slats only after the height travel has finished: the MDT actuator
+              # drops slat telegrams received while the blind is still moving
+              - if:
+                  - "{{ slat_active }}"
+                then:
+                  - wait_template: "{{ states(cover_entity) in ['opening', 'closing'] }}"
+                    timeout: 5
+                    continue_on_timeout: true
+                  - wait_template: "{{ states(cover_entity) not in ['opening', 'closing'] }}"
+                    timeout: "{{ slat_travel_timeout | int(120) }}"
+                    continue_on_timeout: true
+                  - delay:
+                      seconds: "{{ slat_settle_delay | int(3) }}"
+                  # Slat commands in the upper end position are ignored by the actuator
+                  - if:
+                      - "{{ state_attr(cover_entity, 'current_position') | int(100) < 100 }}"
+                    then:
+                      - action: cover.set_cover_tilt_position
+                        target:
+                          entity_id: "{{ cover_entity }}"
+                        data:
+                          tilt_position: "{{ slat_ventilation_tilt if (slat_win_tilted or slat_win_open) else slat_night_tilt }}"
+            else:
+              - choose:
+                  - conditions:
+                      - >-
+                        {{ window_sensor is string
+                           and ((states(window_sensor) | lower) == 'tilted'
+                                or (treat_open_as_tilted and (states(window_sensor) | lower) in ['on', 'open'])) }}
+                    sequence:
+                      - action: cover.set_cover_position
+                        target:
+                          entity_id: !input cover
+                        data:
+                          position: !input tilted_position
+                  - conditions:
+                      - "{{ window_sensor is string and (states(window_sensor) | lower) in ['on', 'open'] }}"
+                    sequence:
+                      - action: cover.set_cover_position
+                        target:
+                          entity_id: !input cover
+                        data:
+                          position: !input night_ventilation_position
+                default:
+                  # Nacht-Zielposition über 0 braucht Positionsangaben —
+                  # sonst (und beim Standard 0) wird komplett geschlossen
+                  - if:
+                      - "{{ night_position | int(0) > 0 and state_attr(cover_entity, 'current_position') is not none }}"
+                    then:
+                      - action: cover.set_cover_position
+                        target:
+                          entity_id: !input cover
+                        data:
+                          position: !input night_position
+                    else:
+                      - action: cover.close_cover
+                        target:
+                          entity_id: !input cover
 
       # --- STURMSCHUTZ ---
       - conditions:
           - condition: trigger
             id: storm_detected
+          # Venetian blinds must always be retracted in a storm — retracting
+          # cannot lock anyone out, so the open-window guard does not apply
           - >-
             {{ force_storm_action
+               or slat_active
                or window_sensor is not string
                or (states(window_sensor) | lower) in ['off', 'closed'] }}
         sequence:
@@ -1365,8 +1682,9 @@ actions:
               - action: input_boolean.turn_off
                 target:
                   entity_id: "{{ shading_status_helper }}"
+          # Panzer mode (closing in a storm) would damage venetian blinds
           - if:
-              - "{{ not panzer_mode }}"
+              - "{{ not panzer_mode or slat_active }}"
             then:
               # Auch die Sturm-Öffnung reißt einen festgefrorenen Panzer ab —
               # bei Frost deshalb nur bis zur schonenden Maximal-Position
@@ -1428,39 +1746,94 @@ actions:
               - "{{ night_mode_boolean is string and is_state(night_mode_boolean, 'on') }}"
               - "{{ not storm_enabled or (wind_now | float(0)) < wind_speed_threshold }}"
             then:
-              - choose:
-                  - conditions:
-                      - >-
-                        {{ window_sensor is string
-                           and ((states(window_sensor) | lower) == 'tilted'
-                                or (treat_open_as_tilted and (states(window_sensor) | lower) in ['on', 'open'])) }}
-                    sequence:
-                      - action: cover.set_cover_position
-                        target:
-                          entity_id: !input cover
-                        data:
-                          position: !input tilted_position
-                  - conditions:
-                      - "{{ window_sensor is string and (states(window_sensor) | lower) in ['on', 'open'] }}"
-                    sequence:
-                      - action: cover.set_cover_position
-                        target:
-                          entity_id: !input cover
-                        data:
-                          position: !input night_ventilation_position
-                default:
+              - if:
+                  - "{{ slat_active }}"
+                then:
+                  # Venetian blind: height as configured for the night; ventilation happens
+                  # through the slats instead of a raised blind (unless explicitly enabled)
+                  - variables:
+                      slat_win_state: "{{ (states(window_sensor) | lower) if window_sensor is string else 'off' }}"
+                      slat_win_tilted: >-
+                        {{ slat_win_state == 'tilted'
+                           or (treat_open_as_tilted and slat_win_state in ['on', 'open']) }}
+                      slat_win_open: "{{ not slat_win_tilted and slat_win_state in ['on', 'open'] }}"
                   - if:
-                      - "{{ night_position | int(0) > 0 and state_attr(cover_entity, 'current_position') is not none }}"
+                      - "{{ slat_win_open and slat_open_raises_cover }}"
                     then:
                       - action: cover.set_cover_position
                         target:
                           entity_id: !input cover
                         data:
-                          position: !input night_position
+                          position: !input night_ventilation_position
                     else:
-                      - action: cover.close_cover
-                        target:
-                          entity_id: !input cover
+                      - if:
+                          - "{{ night_position | int(0) > 0 }}"
+                        then:
+                          - action: cover.set_cover_position
+                            target:
+                              entity_id: !input cover
+                            data:
+                              position: !input night_position
+                        else:
+                          - action: cover.close_cover
+                            target:
+                              entity_id: !input cover
+                  # Slats only after the height travel has finished: the MDT actuator
+                  # drops slat telegrams received while the blind is still moving
+                  - if:
+                      - "{{ slat_active }}"
+                    then:
+                      - wait_template: "{{ states(cover_entity) in ['opening', 'closing'] }}"
+                        timeout: 5
+                        continue_on_timeout: true
+                      - wait_template: "{{ states(cover_entity) not in ['opening', 'closing'] }}"
+                        timeout: "{{ slat_travel_timeout | int(120) }}"
+                        continue_on_timeout: true
+                      - delay:
+                          seconds: "{{ slat_settle_delay | int(3) }}"
+                      # Slat commands in the upper end position are ignored by the actuator
+                      - if:
+                          - "{{ state_attr(cover_entity, 'current_position') | int(100) < 100 }}"
+                        then:
+                          - action: cover.set_cover_tilt_position
+                            target:
+                              entity_id: "{{ cover_entity }}"
+                            data:
+                              tilt_position: "{{ slat_ventilation_tilt if (slat_win_tilted or slat_win_open) else slat_night_tilt }}"
+                else:
+                  - choose:
+                      - conditions:
+                          - >-
+                            {{ window_sensor is string
+                               and ((states(window_sensor) | lower) == 'tilted'
+                                    or (treat_open_as_tilted and (states(window_sensor) | lower) in ['on', 'open'])) }}
+                        sequence:
+                          - action: cover.set_cover_position
+                            target:
+                              entity_id: !input cover
+                            data:
+                              position: !input tilted_position
+                      - conditions:
+                          - "{{ window_sensor is string and (states(window_sensor) | lower) in ['on', 'open'] }}"
+                        sequence:
+                          - action: cover.set_cover_position
+                            target:
+                              entity_id: !input cover
+                            data:
+                              position: !input night_ventilation_position
+                    default:
+                      - if:
+                          - "{{ night_position | int(0) > 0 and state_attr(cover_entity, 'current_position') is not none }}"
+                        then:
+                          - action: cover.set_cover_position
+                            target:
+                              entity_id: !input cover
+                            data:
+                              position: !input night_position
+                        else:
+                          - action: cover.close_cover
+                            target:
+                              entity_id: !input cover
 
       # --- SONNENSCHUTZ ---
       - conditions:
@@ -1574,7 +1947,19 @@ actions:
                       ray_height: >-
                         {{ shading_depth * tan(sun_elevation * pi / 180)
                            / ([cos(az_diff * pi / 180), 0.087] | max) }}
+                      # Venetian blind: fixed height (default fully down), the slats
+                      # do the shading; an opened door with "raise blind" keeps the gap
                       target_position: >-
+                        {% if slat_active %}
+                          {% set p = [[shading_min_position | int(0), 0] | max, 100] | min %}
+                          {% if slat_open_raises_cover and not treat_open_as_tilted
+                                and window_sensor is string
+                                and (states(window_sensor) | lower) in ['on', 'open'] %}
+                            {{ [p, tilted_position | int] | max }}
+                          {% else %}
+                            {{ p }}
+                          {% endif %}
+                        {% else %}
                         {% set glass_free = [[(ray_height - window_sill_height) / window_height * 100, 0] | max, 100] | min %}
                         {% set a = glass_bottom_position | int(0) %}
                         {% set b = glass_top_position | int(100) %}
@@ -1587,38 +1972,126 @@ actions:
                         {% else %}
                           {{ p }}
                         {% endif %}
+                        {% endif %}
                       current_position: "{{ state_attr(cover_entity, 'current_position') | int(-1) }}"
+                      current_tilt: "{{ state_attr(cover_entity, 'current_tilt_position') | int(-1) }}"
+                      # Profile angle: sun elevation projected onto the vertical plane
+                      # perpendicular to the facade (what matters for horizontal slats)
+                      profile_angle: >-
+                        {{ atan(tan(sun_elevation * pi / 180)
+                                / ([cos(az_diff * pi / 180), 0.087] | max)) * 180 / pi }}
+                      # Cut-off: flattest slat angle beta (degrees below horizontal) at
+                      # which no direct ray passes between two slats:
+                      #   beta = asin(spacing * cos(profile) / width) - profile
+                      # mapped linearly onto the tilt range closed (0 %) .. open (100 %)
+                      target_tilt: >-
+                        {% if slat_shading_mode == 'fixed' %}
+                          {{ slat_shading_fixed_tilt | int(30) }}
+                        {% else %}
+                          {% set a = profile_angle | float(0) * pi / 180 %}
+                          {% set ratio = [[slat_spacing | float(72) * cos(a) / (slat_width | float(80)), 1] | min, 0] | max %}
+                          {% set beta = (asin(ratio) - a) * 180 / pi + slat_tracking_margin | float(0) %}
+                          {% set closed = slat_closed_angle | float(80) %}
+                          {% set opened = slat_open_angle | float(0) %}
+                          {% set t = (beta - closed) / (opened - closed) * 100 %}
+                          {{ [[t | round(0) | int, 0] | max, 100] | min }}
+                        {% endif %}
                   - condition: "{{ current_position >= 0 }}"
                   - variables:
                       deviation: "{{ (current_position - target_position | int) | abs }}"
                   - if:
-                      - "{{ is_state(shading_status_helper, 'on') }}"
+                      - "{{ slat_active }}"
                     then:
-                      # Beschattung läuft bereits: nur kleine Abweichungen nachführen.
-                      # Große Abweichungen können nicht vom Sonnenstand kommen (der
-                      # wandert pro Tick nur wenige Prozent) — das war ein manueller
-                      # Eingriff und wird bis zum Beschattungs-Ende respektiert.
+                      - variables:
+                          shading_running: "{{ is_state(shading_status_helper, 'on') }}"
+                          tilt_deviation: "{{ 999 if current_tilt < 0 else (current_tilt - target_tilt | int) | abs }}"
+                          # Large deviations of height or slats cannot come from sun tracking
+                          # (a few percent per tick) — that was a manual intervention, respected
+                          # until shading ends
+                          manual_override: >-
+                            {{ shading_running
+                               and (deviation > shading_override_threshold
+                                    or (current_tilt >= 0 and tilt_deviation > shading_override_threshold)) }}
                       - if:
-                          - "{{ deviation >= shading_min_change and deviation <= shading_override_threshold }}"
+                          - "{{ not shading_running }}"
                         then:
-                          - action: cover.set_cover_position
+                          - action: input_boolean.turn_on
                             target:
-                              entity_id: !input cover
-                            data:
-                              position: "{{ target_position }}"
+                              entity_id: "{{ shading_status_helper }}"
+                      - if:
+                          - "{{ not manual_override }}"
+                        then:
+                          - if:
+                              - "{{ deviation >= shading_min_change }}"
+                            then:
+                              - action: cover.set_cover_position
+                                target:
+                                  entity_id: !input cover
+                                data:
+                                  position: "{{ target_position }}"
+                              # Slats only after the height travel has finished: the MDT actuator
+                              # drops slat telegrams received while the blind is still moving
+                              - if:
+                                  - "{{ slat_active }}"
+                                then:
+                                  - wait_template: "{{ states(cover_entity) in ['opening', 'closing'] }}"
+                                    timeout: 5
+                                    continue_on_timeout: true
+                                  - wait_template: "{{ states(cover_entity) not in ['opening', 'closing'] }}"
+                                    timeout: "{{ slat_travel_timeout | int(120) }}"
+                                    continue_on_timeout: true
+                                  - delay:
+                                      seconds: "{{ slat_settle_delay | int(3) }}"
+                                  # Slat commands in the upper end position are ignored by the actuator
+                                  - if:
+                                      - "{{ state_attr(cover_entity, 'current_position') | int(100) < 100 }}"
+                                    then:
+                                      - action: cover.set_cover_tilt_position
+                                        target:
+                                          entity_id: "{{ cover_entity }}"
+                                        data:
+                                          tilt_position: "{{ target_tilt }}"
+                            else:
+                              # Height is fine: only track the slats (at shading start every
+                              # deviation counts, afterwards only steps >= minimum change)
+                              - if:
+                                  - "{{ tilt_deviation >= (shading_min_change if shading_running else 1) }}"
+                                  - "{{ current_position < 100 }}"
+                                then:
+                                  - action: cover.set_cover_tilt_position
+                                    target:
+                                      entity_id: !input cover
+                                    data:
+                                      tilt_position: "{{ target_tilt }}"
                     else:
-                      # Beschattung beginnt: Anfangsbewegung immer ausführen
-                      - action: input_boolean.turn_on
-                        target:
-                          entity_id: "{{ shading_status_helper }}"
                       - if:
-                          - "{{ deviation >= shading_min_change }}"
+                          - "{{ is_state(shading_status_helper, 'on') }}"
                         then:
-                          - action: cover.set_cover_position
+                          # Beschattung läuft bereits: nur kleine Abweichungen nachführen.
+                          # Große Abweichungen können nicht vom Sonnenstand kommen (der
+                          # wandert pro Tick nur wenige Prozent) — das war ein manueller
+                          # Eingriff und wird bis zum Beschattungs-Ende respektiert.
+                          - if:
+                              - "{{ deviation >= shading_min_change and deviation <= shading_override_threshold }}"
+                            then:
+                              - action: cover.set_cover_position
+                                target:
+                                  entity_id: !input cover
+                                data:
+                                  position: "{{ target_position }}"
+                        else:
+                          # Beschattung beginnt: Anfangsbewegung immer ausführen
+                          - action: input_boolean.turn_on
                             target:
-                              entity_id: !input cover
-                            data:
-                              position: "{{ target_position }}"
+                              entity_id: "{{ shading_status_helper }}"
+                          - if:
+                              - "{{ deviation >= shading_min_change }}"
+                            then:
+                              - action: cover.set_cover_position
+                                target:
+                                  entity_id: !input cover
+                                data:
+                                  position: "{{ target_position }}"
               # Beschattung beenden
               - conditions:
                   - "{{ is_state(shading_status_helper, 'on') }}"
@@ -1637,6 +2110,28 @@ actions:
                       entity_id: !input cover
                     data:
                       position: !input shading_end_position
+                  # Slats only after the height travel has finished: the MDT actuator
+                  # drops slat telegrams received while the blind is still moving
+                  - if:
+                      - "{{ slat_active }}"
+                    then:
+                      - wait_template: "{{ states(cover_entity) in ['opening', 'closing'] }}"
+                        timeout: 5
+                        continue_on_timeout: true
+                      - wait_template: "{{ states(cover_entity) not in ['opening', 'closing'] }}"
+                        timeout: "{{ slat_travel_timeout | int(120) }}"
+                        continue_on_timeout: true
+                      - delay:
+                          seconds: "{{ slat_settle_delay | int(3) }}"
+                      # Slat commands in the upper end position are ignored by the actuator
+                      - if:
+                          - "{{ state_attr(cover_entity, 'current_position') | int(100) < 100 }}"
+                        then:
+                          - action: cover.set_cover_tilt_position
+                            target:
+                              entity_id: "{{ cover_entity }}"
+                            data:
+                              tilt_position: "{{ slat_shading_end_tilt }}"
 
       # --- SONNENHEIZEN (Winter) ---
       - conditions:
@@ -1726,6 +2221,29 @@ actions:
                         {% else %}
                           {{ solar_heating_position | int(100) }}
                         {% endif %}
+                  # Venetian blind: slats fully open for maximum solar gain
+                  # Slats only after the height travel has finished: the MDT actuator
+                  # drops slat telegrams received while the blind is still moving
+                  - if:
+                      - "{{ slat_active }}"
+                    then:
+                      - wait_template: "{{ states(cover_entity) in ['opening', 'closing'] }}"
+                        timeout: 5
+                        continue_on_timeout: true
+                      - wait_template: "{{ states(cover_entity) not in ['opening', 'closing'] }}"
+                        timeout: "{{ slat_travel_timeout | int(120) }}"
+                        continue_on_timeout: true
+                      - delay:
+                          seconds: "{{ slat_settle_delay | int(3) }}"
+                      # Slat commands in the upper end position are ignored by the actuator
+                      - if:
+                          - "{{ state_attr(cover_entity, 'current_position') | int(100) < 100 }}"
+                        then:
+                          - action: cover.set_cover_tilt_position
+                            target:
+                              entity_id: "{{ cover_entity }}"
+                            data:
+                              tilt_position: "100"
               # Sonnenheizen beenden: nur Status zurücksetzen, kein erzwungenes Schließen —
               # der Rollladen bleibt offen, bis Nachtmodus/Fenster-Interaktion ihn regulär bewegen
               - conditions:
@@ -1874,6 +2392,28 @@ actions:
                   - action: cover.close_cover
                     target:
                       entity_id: !input cover
+              # Slats only after the height travel has finished: the MDT actuator
+              # drops slat telegrams received while the blind is still moving
+              - if:
+                  - "{{ slat_active }}"
+                then:
+                  - wait_template: "{{ states(cover_entity) in ['opening', 'closing'] }}"
+                    timeout: 5
+                    continue_on_timeout: true
+                  - wait_template: "{{ states(cover_entity) not in ['opening', 'closing'] }}"
+                    timeout: "{{ slat_travel_timeout | int(120) }}"
+                    continue_on_timeout: true
+                  - delay:
+                      seconds: "{{ slat_settle_delay | int(3) }}"
+                  # Slat commands in the upper end position are ignored by the actuator
+                  - if:
+                      - "{{ state_attr(cover_entity, 'current_position') | int(100) < 100 }}"
+                    then:
+                      - action: cover.set_cover_tilt_position
+                        target:
+                          entity_id: "{{ cover_entity }}"
+                        data:
+                          tilt_position: "{{ slat_night_tilt }}"
 
       # --- NOTIFICATION-ACTION: ROLLLADEN SCHLIESSEN ---
       - conditions:
@@ -1898,12 +2438,19 @@ actions:
           # unavailable/unknown nur sichern, wenn noch KEIN Snapshot existiert:
           # nach einem HA-Neustart fehlt er (Szene weg), aber bei einem Sensor-Blip
           # am offenen Fenster würde er sonst mit der Offen-Position überschrieben
-          - if:
-              - >-
+          - variables:
+              snapshot_taken: >-
                 {{ trigger.from_state is not none
                    and ((trigger.from_state.state | lower) in ['off', 'closed']
                         or (trigger.from_state.state in ['unavailable', 'unknown']
                             and expand(reclose_scene) | count == 0)) }}
+              # Snapshot values of THIS run: a scene restore sends height and
+              # slats back to back, which the MDT actuator cannot handle — venetian
+              # blinds are therefore restored sequentially from these values
+              snap_position: "{{ state_attr(cover_entity, 'current_position') }}"
+              snap_tilt: "{{ state_attr(cover_entity, 'current_tilt_position') }}"
+          - if:
+              - "{{ snapshot_taken }}"
             then:
               - action: scene.create
                 data:
@@ -1911,6 +2458,29 @@ actions:
                   snapshot_entities:
                     - "{{ cover_entity }}"
           - choose:
+              # Venetian blind: keep the height, only open the slats for ventilation.
+              # A fully opened window raises the blind only with "Raise blind when
+              # window is fully opened" — then the roller shutter branches below apply
+              - conditions:
+                  - "{{ slat_active }}"
+                  - >-
+                    {{ (trigger.to_state.state | lower) == 'tilted'
+                       or ((trigger.to_state.state | lower) in ['on', 'open']
+                           and (treat_open_as_tilted or not slat_open_raises_cover)) }}
+                sequence:
+                  # Running shading keeps control of the slats; otherwise they are
+                  # only opened (never closed further) and not in the upper end
+                  # position, where the actuator ignores slat commands
+                  - if:
+                      - "{{ not (shading_status_helper is string and is_state(shading_status_helper, 'on')) }}"
+                      - "{{ state_attr(cover_entity, 'current_position') | int(100) < 100 }}"
+                      - "{{ state_attr(cover_entity, 'current_tilt_position') | int(101) < slat_ventilation_tilt | int(100) }}"
+                    then:
+                      - action: cover.set_cover_tilt_position
+                        target:
+                          entity_id: !input cover
+                        data:
+                          tilt_position: "{{ slat_ventilation_tilt }}"
               - conditions:
                   - >-
                     {{ (trigger.to_state.state | lower) == 'tilted'
@@ -1966,6 +2536,32 @@ actions:
                       entity_id: !input cover
                     data:
                       position: !input night_ventilation_position
+                  # Slats only after the height travel has finished: the MDT actuator
+                  # drops slat telegrams received while the blind is still moving
+                  - if:
+                      - "{{ slat_active }}"
+                    then:
+                      - wait_template: "{{ states(cover_entity) in ['opening', 'closing'] }}"
+                        timeout: 5
+                        continue_on_timeout: true
+                      - wait_template: "{{ states(cover_entity) not in ['opening', 'closing'] }}"
+                        timeout: "{{ slat_travel_timeout | int(120) }}"
+                        continue_on_timeout: true
+                      - delay:
+                          seconds: "{{ slat_settle_delay | int(3) }}"
+                      # Slat commands in the upper end position are ignored by the actuator
+                      - if:
+                          - "{{ state_attr(cover_entity, 'current_position') | int(100) < 100 }}"
+                        then:
+                          - action: cover.set_cover_tilt_position
+                            target:
+                              entity_id: "{{ cover_entity }}"
+                            data:
+                              tilt_position: "{{ slat_ventilation_tilt }}"
+          # Venetian blind: only the run that took the snapshot restores it (from
+          # its own snapshot values) — a run started by tilted -> open stops here.
+          # The snapshot run extends its restore window instead (see below)
+          - condition: "{{ not slat_active or snapshot_taken }}"
           - wait_for_trigger:
               - trigger: state
                 entity_id: !input window_sensor
@@ -1978,6 +2574,40 @@ actions:
             timeout:
               minutes: !input reclose_timeout
             continue_on_timeout: true
+          # Venetian blind: the restore window counts from the LAST window change,
+          # like in the roller shutter logic, where the run started by
+          # tilted -> open restarts the clock. As long as the window changed
+          # within the restore window, keep waiting for the remaining time.
+          - if:
+              - "{{ slat_active and wait.trigger is none }}"
+            then:
+              - repeat:
+                  sequence:
+                    - wait_for_trigger:
+                        - trigger: state
+                          entity_id: !input window_sensor
+                          to:
+                            - "off"
+                            - "closed"
+                            - "Closed"
+                          for:
+                            seconds: 2
+                      timeout: >-
+                        {{ [as_timestamp(states[window_sensor].last_changed)
+                            + (reclose_timeout | float(30)) * 60
+                            - as_timestamp(now()), 0] | max | int }}
+                      continue_on_timeout: true
+                  until:
+                    - >-
+                      {{ (states(window_sensor) | lower) in ['off', 'closed']
+                         or as_timestamp(states[window_sensor].last_changed)
+                            + (reclose_timeout | float(30)) * 60 <= as_timestamp(now()) }}
+          # Closed within the restore window? For venetian blinds the extended wait
+          # above may have caught the close, so the current window state counts too
+          - variables:
+              reclose_closed: >-
+                {{ wait.trigger is not none
+                   or (slat_active and (states(window_sensor) | lower) in ['off', 'closed']) }}
           # Zustand NACH dem Warten neu bewerten — währenddessen können Nachtmodus
           # oder Sturm aktiv geworden sein, dann darf der Snapshot nicht zurückgeholt werden
           - variables:
@@ -1999,7 +2629,7 @@ actions:
                 {% endif %}
               storm_now: "{{ storm_enabled and (wind_now | float(0)) >= wind_speed_threshold }}"
           - if:
-              - "{{ wait.trigger is none }}"
+              - "{{ not reclose_closed }}"
             then:
               - if:
                   - "{{ force_close }}"
@@ -2028,6 +2658,28 @@ actions:
                           - action: cover.close_cover
                             target:
                               entity_id: !input cover
+                      # Slats only after the height travel has finished: the MDT actuator
+                      # drops slat telegrams received while the blind is still moving
+                      - if:
+                          - "{{ slat_active }}"
+                        then:
+                          - wait_template: "{{ states(cover_entity) in ['opening', 'closing'] }}"
+                            timeout: 5
+                            continue_on_timeout: true
+                          - wait_template: "{{ states(cover_entity) not in ['opening', 'closing'] }}"
+                            timeout: "{{ slat_travel_timeout | int(120) }}"
+                            continue_on_timeout: true
+                          - delay:
+                              seconds: "{{ slat_settle_delay | int(3) }}"
+                          # Slat commands in the upper end position are ignored by the actuator
+                          - if:
+                              - "{{ state_attr(cover_entity, 'current_position') | int(100) < 100 }}"
+                            then:
+                              - action: cover.set_cover_tilt_position
+                                target:
+                                  entity_id: "{{ cover_entity }}"
+                                data:
+                                  tilt_position: "{{ slat_night_tilt }}"
                   # Normalfall: Ausgangsposition wiederherstellen (nur wenn der
                   # Snapshot existiert, kein Sturm aktiv ist und keine Pause läuft).
                   # Existenz via expand
@@ -2039,9 +2691,49 @@ actions:
                       - "{{ not pause_now }}"
                       - "{{ expand(reclose_scene) | count > 0 }}"
                     sequence:
-                      - action: scene.turn_on
-                        target:
-                          entity_id: "{{ reclose_scene }}"
+                      - if:
+                          - "{{ slat_active }}"
+                        then:
+                          # Sequential restore: height first, slats after the travel
+                          - if:
+                              - >-
+                                {{ snap_position is number
+                                   and state_attr(cover_entity, 'current_position') | int(-1) != snap_position | int }}
+                            then:
+                              - action: cover.set_cover_position
+                                target:
+                                  entity_id: !input cover
+                                data:
+                                  position: "{{ snap_position | int }}"
+                          - if:
+                              - "{{ snap_tilt is number }}"
+                            then:
+                              # Slats only after the height travel has finished: the MDT actuator
+                              # drops slat telegrams received while the blind is still moving
+                              - if:
+                                  - "{{ slat_active }}"
+                                then:
+                                  - wait_template: "{{ states(cover_entity) in ['opening', 'closing'] }}"
+                                    timeout: 5
+                                    continue_on_timeout: true
+                                  - wait_template: "{{ states(cover_entity) not in ['opening', 'closing'] }}"
+                                    timeout: "{{ slat_travel_timeout | int(120) }}"
+                                    continue_on_timeout: true
+                                  - delay:
+                                      seconds: "{{ slat_settle_delay | int(3) }}"
+                                  # Slat commands in the upper end position are ignored by the actuator
+                                  - if:
+                                      - "{{ state_attr(cover_entity, 'current_position') | int(100) < 100 }}"
+                                    then:
+                                      - action: cover.set_cover_tilt_position
+                                        target:
+                                          entity_id: "{{ cover_entity }}"
+                                        data:
+                                          tilt_position: "{{ snap_tilt | int }}"
+                        else:
+                          - action: scene.turn_on
+                            target:
+                              entity_id: "{{ reclose_scene }}"
                       # Restore ist eine Fremdbewegung: Beschattungs-Status freigeben,
                       # damit der nächste Tick bei Bedarf frisch beschattet, statt die
                       # Abweichung als manuellen Eingriff bis Tagesende zu sperren
